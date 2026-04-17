@@ -1,4 +1,7 @@
 import numpy as np
+import ctypes
+
+import soundcard as sc
 
 from OpenGL.GL import *
 from OpenGL.GL.shaders import compileProgram, compileShader
@@ -8,13 +11,20 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog, QMenu, QMessageBox
 from PyQt6.QtGui import QAction, QKeySequence
 
+# normalizes it to be between 0 and 1 instead of -1, 1
 vertex_shader = """
-#version 330 core
+#version 330
 
-void main() {
-    
-}
-"""
+// we can assume the z axis here is 0, but requires vec attri
+layout(location = 0) in vec3 aPos;
+
+out vec2 fragCoord;
+
+void main()
+{
+    gl_Position =  vec4(aPos,1);
+    fragCoord  = (aPos.xy+vec2(1,1))/2.0;
+}"""
 
 fragment_shader = """
 #version 330 core
@@ -32,7 +42,11 @@ uniform int bar_width;   // bar width (configurable), not used here
 uniform int bar_spacing; // space between bars (configurable)
 
 void main() {
-    
+    if (fragCoord.x > 0.5) {
+        fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+    } else {
+        fragColor = vec4(1.0, 1.0, 1.0, 1.0);
+    }
 }
 """
 
@@ -42,20 +56,72 @@ class MainCanvas(QOpenGLWidget):
 
     def initializeGL(self):
         # compile the shader program
-        # self.shader = compileProgram(compileShader(vertex_shader, GL_VERTEX_SHADER),
-        #                     compileShader(fragment_shader, GL_FRAGMENT_SHADER))
+        self.shader = compileProgram(compileShader(vertex_shader, GL_VERTEX_SHADER),
+                            compileShader(fragment_shader, GL_FRAGMENT_SHADER))
+
 
         # define the widget to use this program
-        # glUseProgram(self.shader)
+        glUseProgram(self.shader)
 
+        # define buffers
+        # input data (x, y, z) (monocolor)
+        vertices = [
+             -1.0, -1.0,
+             1.0, -1.0,
+             1.0, 1.0,
+             -1.0, 1.0,
+        ]
+        self.vertices = np.array(vertices, dtype=np.float32)
+
+        # indices define elements based on connecting vertices (reuse)
+        indices = [
+            0, 1, 2, 3
+        ]
+        self.indices = np.array(indices, dtype=np.int32)
+
+        # vertex buffer object
+        self.vbo = glGenBuffers(1)
+        self.vao = glGenVertexArrays(1)
+        self.ebo = glGenBuffers(1)
+
+        glBindVertexArray(self.vao)
+
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
+        glBufferData(GL_ARRAY_BUFFER, self.vertices.nbytes, self.vertices, GL_STATIC_DRAW)
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.indices.nbytes, self.indices, GL_STATIC_DRAW)
+
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * 4, ctypes.c_void_p(0))
+        
         # set background color
         glClearColor(0.2, 0.3, 0.3, 1.0)
+
+        # TODO:
+        # set a texture 2d which we paint on instead of the other thing (do we need?)
+
 
     def resizeGL(self, width, height):
         glViewport(0, 0, width, height)
 
     def paintGL(self):
         glClear(GL_COLOR_BUFFER_BIT)
+        glUseProgram(self.shader)
+        # triangle fan sets one as a hub and then the rest connect to it (hence FAN)
+        glDrawElements(GL_TRIANGLE_FAN, 4, GL_UNSIGNED_INT, ctypes.c_void_p(0))
+
+
+# class AudioWorker(QObject):
+#     # define signals that emit info to be displayed in the frame buffer
+#     buffer = pyqtSignal(np.ndarray)
+#     def __init__(self):
+#         QObject.__init__(self)
+
+#     # what will be run by the thread
+#     def run(self):
+#         pass
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
