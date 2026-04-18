@@ -1,6 +1,7 @@
 import numpy as np
 import ctypes
 import sys
+import argparse
 
 import soundcard as sc
 import scipy as sp
@@ -13,6 +14,11 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog, QMenu, QMessageBox, QLabel, QHBoxLayout, QWidget
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtCore import pyqtSignal, QThread, QObject
+
+def get_argparser():
+    parser = argparse.ArgumentParser("audioviz")
+    parser.add_argument("-f", "--file", default="bars.frag")
+    return parser
 
 # normalizes it to be between 0 and 1 instead of -1, 1
 vertex_shader = """
@@ -27,64 +33,24 @@ void main()
 {
     gl_Position =  vec4(aPos,1);
     fragCoord  = (aPos.xy+vec2(1,1))/2.0;
-}"""
-
-fragment_shader = """
-#version 330 core
-
-in vec2 fragCoord;
-out vec4 fragColor;
-
-// below are stolen from cava as they turn out to be useful shaders
-// use uniforms / uniform buffers to alter the visualization every draw call
-// bar values. defaults to left channels first (low to high), then right (high to low).
-uniform float bars[512];
-
-// uniform int bars_count;  // number of bars (left + right) (configurable)
-// uniform int bar_width;   // bar width (configurable), not used here
-// uniform int bar_spacing; // space between bars (configurable)
-
-void rgb_to_norm(in float r, in float g, in float b, out vec3 color) {
-    color = vec3(r / 256.0, g / 256.0, b / 256.0);
-}
-
-void main() {
-    vec3 cool_color = vec3(0.0, 0.0, 0.0);
-    rgb_to_norm(32.0, 194.0, 14.0, cool_color);
-    vec4 bgcolor = vec4(0.0, 0.0, 0.0, 1.0);
-    vec4 fgcolor = vec4(cool_color, 1.0);
-    // divide into sections of 1.0 / 512.0
-    int bar = int(fragCoord.x * 128);
-    float y_val = bars[bar];
-    if (y_val == 0.0) {
-        fragColor = bgcolor;
-    } else {
-        if (fragCoord.y < y_val) {
-            // we interp the alpha
-            float diff = 1 - ((y_val - fragCoord.y) / y_val);
-            fragColor = vec4(cool_color, diff);
-        } else {
-            fragColor = bgcolor;
-        }
-    }
 }
 """
 
 class MainCanvas(QOpenGLWidget):
-    def __init__(self):
+    def __init__(self, frag):
         QOpenGLWidget.__init__(self)
         self.update_data = False
         self.data = np.zeros(128)
+        self.fragment_shader = frag
 
     def initializeGL(self):
         # compile the shader program
         self.shader = compileProgram(compileShader(vertex_shader, GL_VERTEX_SHADER),
-                            compileShader(fragment_shader, GL_FRAGMENT_SHADER))
+                            compileShader(self.fragment_shader, GL_FRAGMENT_SHADER))
 
 
         # define the widget to use this program
         glUseProgram(self.shader)
-        glEnable(GL_BLEND)
 
         self.bar_location = glGetUniformLocation(self.shader, "bars")
 
@@ -164,14 +130,12 @@ class AudioWorker(QObject):
                 self.buffer.emit(mag)
 
 
-
-
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, frag):
         QMainWindow.__init__(self)
         self.setWindowTitle("audioviz")
         layout = QHBoxLayout()
-        self.canvas = MainCanvas()
+        self.canvas = MainCanvas(frag)
         layout.addWidget(self.canvas)
         widget = QWidget()
         widget.setLayout(layout)
@@ -192,7 +156,11 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
+    args = get_argparser().parse_args()
+    fragment = None
+    with open(args.file, "r") as f:
+        fragment = f.read()
     app = QApplication(["Audio Visualizer"])
-    main_window = MainWindow()
+    main_window = MainWindow(fragment)
     main_window.show()
     app.exec()
