@@ -45,10 +45,15 @@ uniform float bars[512];
 // uniform int bar_spacing; // space between bars (configurable)
 
 void main() {
-    if (fragCoord.x > 0.5) {
-        fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+    vec4 bgcolor = vec4(0.0, 0.0, 0.0, 1.0);
+    vec4 fgcolor = vec4(1.0, 1.0, 1.0, 1.0);
+    // divide into sections of 1.0 / 512.0
+    int bar = int(fragCoord.x * 128);
+    float y_val = bars[bar];
+    if (fragCoord.y < y_val) {
+        fragColor = fgcolor;
     } else {
-        fragColor = vec4(1.0, 1.0, 1.0, 1.0);
+        fragColor = bgcolor;
     }
 }
 """
@@ -56,6 +61,8 @@ void main() {
 class MainCanvas(QOpenGLWidget):
     def __init__(self):
         QOpenGLWidget.__init__(self)
+        self.update_data = False
+        self.data = np.zeros(128)
 
     def initializeGL(self):
         # compile the shader program
@@ -107,39 +114,41 @@ class MainCanvas(QOpenGLWidget):
         glViewport(0, 0, width, height)
 
     def paintGL(self):
-        glClear(GL_COLOR_BUFFER_BIT)
         glUseProgram(self.shader)
+        if self.update_data:
+            self.update_data = False
+            glUniform1fv(self.bar_location, len(self.data), self.data)
+
+        glClear(GL_COLOR_BUFFER_BIT)
         # triangle fan sets one as a hub and then the rest connect to it (hence FAN)
         glDrawElements(GL_TRIANGLE_FAN, 4, GL_UNSIGNED_INT, ctypes.c_void_p(0))
 
     # buffer slot
     def set_data(self, data):
         # process fft data here for now
-        yf = sp.fft.fft(data)
-        N = 512
-        mag = 2/512 * np.abs(yf)
         # change uniform data here
-        glUniform1fv(self.bar_location, 512, mag)
+        self.data = data
+        self.update_data = True
         self.update()
 
 
 class AudioWorker(QObject):
     # define signals that emit info to be displayed in the frame buffer
     buffer = pyqtSignal(np.ndarray)
-    ping = pyqtSignal()
 
     def __init__(self):
         QObject.__init__(self)
 
     # what will be run by the thread
     def run(self):
-        self.ping.emit()
         mic = sc.get_microphone(str(sc.default_speaker().name), include_loopback=True)
         # -1 -> mono mix of all channels on linux
         with mic.recorder(44100, channels=[-1]) as r:
             while not QThread.currentThread().isInterruptionRequested():
-                data = r.record(numframes=512)
-                self.buffer.emit(data.ravel())
+                data = r.record(numframes=128)
+                yf = sp.fft.fftshift(sp.fft.fft(data.ravel(), workers=-1))
+                mag = 2/128 * np.abs(yf)
+                self.buffer.emit(mag)
 
 
 
