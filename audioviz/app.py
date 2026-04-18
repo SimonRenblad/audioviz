@@ -2,6 +2,7 @@ import numpy as np
 import ctypes
 import sys
 import argparse
+import os
 
 import soundcard as sc
 import scipy as sp
@@ -15,10 +16,12 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog, QMenu, QMess
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtCore import pyqtSignal, QThread, QObject
 
+
 def get_argparser():
     parser = argparse.ArgumentParser("audioviz")
-    parser.add_argument("-f", "--file", default="bars.frag")
+    parser.add_argument("file")
     return parser
+
 
 # normalizes it to be between 0 and 1 instead of -1, 1
 vertex_shader = """
@@ -35,6 +38,7 @@ void main()
     fragCoord  = (aPos.xy+vec2(1,1))/2.0;
 }
 """
+
 
 class MainCanvas(QOpenGLWidget):
     def __init__(self, frag):
@@ -152,6 +156,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, ev):
         self._audio_thread.requestInterruption()
+        self._audio_thread.quit()
+        self._audio_thread.wait()
         ev.accept()
 
 
