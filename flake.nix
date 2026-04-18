@@ -15,6 +15,7 @@
         soundcard
         pyqt6
         pyopengl
+        scipy
       ];
     };
   };
