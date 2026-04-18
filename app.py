@@ -1,15 +1,18 @@
 import numpy as np
 import ctypes
+import sys
 
 import soundcard as sc
+import scipy as sp
 
 from OpenGL.GL import *
 from OpenGL.GL.shaders import compileProgram, compileShader
 
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from PyQt6 import QtCore, QtGui, QtWidgets
-from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog, QMenu, QMessageBox
+from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog, QMenu, QMessageBox, QLabel, QHBoxLayout, QWidget
 from PyQt6.QtGui import QAction, QKeySequence
+from PyQt6.QtCore import pyqtSignal, QThread, QObject
 
 # normalizes it to be between 0 and 1 instead of -1, 1
 vertex_shader = """
@@ -37,9 +40,9 @@ out vec4 fragColor;
 // bar values. defaults to left channels first (low to high), then right (high to low).
 uniform float bars[512];
 
-uniform int bars_count;  // number of bars (left + right) (configurable)
-uniform int bar_width;   // bar width (configurable), not used here
-uniform int bar_spacing; // space between bars (configurable)
+// uniform int bars_count;  // number of bars (left + right) (configurable)
+// uniform int bar_width;   // bar width (configurable), not used here
+// uniform int bar_spacing; // space between bars (configurable)
 
 void main() {
     if (fragCoord.x > 0.5) {
@@ -62,6 +65,8 @@ class MainCanvas(QOpenGLWidget):
 
         # define the widget to use this program
         glUseProgram(self.shader)
+
+        self.bar_location = glGetUniformLocation(self.shader, "bars")
 
         # define buffers
         # input data (x, y, z) (monocolor)
@@ -98,10 +103,6 @@ class MainCanvas(QOpenGLWidget):
         # set background color
         glClearColor(0.2, 0.3, 0.3, 1.0)
 
-        # TODO:
-        # set a texture 2d which we paint on instead of the other thing (do we need?)
-
-
     def resizeGL(self, width, height):
         glViewport(0, 0, width, height)
 
@@ -111,25 +112,60 @@ class MainCanvas(QOpenGLWidget):
         # triangle fan sets one as a hub and then the rest connect to it (hence FAN)
         glDrawElements(GL_TRIANGLE_FAN, 4, GL_UNSIGNED_INT, ctypes.c_void_p(0))
 
+    # buffer slot
+    def set_data(self, data):
+        # process fft data here for now
+        yf = sp.fft.fft(data)
+        N = 512
+        mag = 2/512 * np.abs(yf)
+        # change uniform data here
+        glUniform1fv(self.bar_location, 512, mag)
+        self.update()
 
-# class AudioWorker(QObject):
-#     # define signals that emit info to be displayed in the frame buffer
-#     buffer = pyqtSignal(np.ndarray)
-#     def __init__(self):
-#         QObject.__init__(self)
 
-#     # what will be run by the thread
-#     def run(self):
-#         pass
+class AudioWorker(QObject):
+    # define signals that emit info to be displayed in the frame buffer
+    buffer = pyqtSignal(np.ndarray)
+    ping = pyqtSignal()
+
+    def __init__(self):
+        QObject.__init__(self)
+
+    # what will be run by the thread
+    def run(self):
+        self.ping.emit()
+        mic = sc.get_microphone(str(sc.default_speaker().name), include_loopback=True)
+        # -1 -> mono mix of all channels on linux
+        with mic.recorder(44100, channels=[-1]) as r:
+            while not QThread.currentThread().isInterruptionRequested():
+                data = r.record(numframes=512)
+                self.buffer.emit(data.ravel())
+
+
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         QMainWindow.__init__(self)
         self.setWindowTitle("audioviz")
-        self.setCentralWidget(MainCanvas())
+        layout = QHBoxLayout()
+        self.canvas = MainCanvas()
+        layout.addWidget(self.canvas)
+        widget = QWidget()
+        widget.setLayout(layout)
+        self.setCentralWidget(widget)
+        #run the main thread
+        self._audio_thread = QThread()
+        self._audio_thread.setObjectName("AudioThread")
+        self._audio_worker = AudioWorker()
+        self._audio_worker.moveToThread(self._audio_thread)
+
+        self._audio_worker.buffer.connect(self.canvas.set_data)
+        self._audio_thread.started.connect(self._audio_worker.run)
+        self._audio_thread.start()
 
     def closeEvent(self, ev):
+        self._audio_thread.requestInterruption()
         ev.accept()
 
 
