@@ -155,7 +155,7 @@ class MainWindow(QMainWindow):
         ev.accept()
 
 
-if __name__ == "__main__":
+def main():
     args = get_argparser().parse_args()
     fragment = None
     with open(args.file, "r") as f:
@@ -164,3 +164,6 @@ if __name__ == "__main__":
     main_window = MainWindow(fragment)
     main_window.show()
     app.exec()
+
+if __name__ == "__main__":
+    main()
